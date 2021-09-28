@@ -16,6 +16,9 @@ use Illuminate\Support\Facades\Log;
 
 class StatController extends Controller
 {
+
+    private $i = 0;
+    private $ip_array = [];
     public function endpoint(Request $request)
     {
 
@@ -24,11 +27,11 @@ class StatController extends Controller
 
         $deffield = ' ';
         $actualversion = 861;
-        $vers = '';
+        $actualuuid = '';
         $setting = Setting::all()->first();
         if($setting) {
             $actualversion = $setting->actualversion;
-            $vers = $setting->versionname;
+            $actualuuid = $setting->versionname;
         }
 
         if ($request->lang == 'en' || $request->lang == 'ru') {
@@ -36,25 +39,25 @@ class StatController extends Controller
             switch ($request->ver) {
                 case 761:
                     $field = 'unact_' . $prefix;// мобильная версия
-                    if($vers == $request->installid){
+                    if($actualuuid == $request->installid){
                     $deffield = 'defined_unact_' . $prefix;
                     }
                     break;
                 case $actualversion:
                     $field = 'act_' . $prefix;// актуальная версия
-                    if($vers == $request->installid){
-                    $deffield = 'defined_act_' . $prefix;   
-                    }
+                    
                     break;
                 default:
                     $field = 'undef_' . $prefix;// неизвестная версия
+                    if($actualuuid == $request->installid){
+                     $deffield = 'defined_act_' . $prefix;   
+                     }
             }
         } else {
             $field = 'undefinite';// без языковой принадлежности, может быть вообще любой запрос
         }
 
         $ndate = date("dmY");
-
         $day = Day::where('date', $ndate)->first();
         $definedversion = DefinedVersion::whereDate('created_at', Carbon::today())->first();
 
@@ -68,30 +71,48 @@ class StatController extends Controller
             $day->$field = 1;
             $day->save();
         }
-        if($definedversion){
-            $definedversion->created_at = Carbon::today();
-            if($deffield == 'defined_act_en')
-            $definedversion->defined_act_en += 1;
-        if($deffield == 'defined_act_ru')
-            $definedversion->defined_act_ru += 1;
-        if($deffield == 'defined_unact_en')
-            $definedversion->defined_unact_en += 1;
-        if($deffield == 'defined_unact_ru')
-            $definedversion->defined_unact_ru += 1;
-            $definedversion->save();
-        } else {
-            $definedversion = new DefinedVersion();
-            $definedversion->created_at = Carbon::today();
-            if($deffield == 'defined_act_en')
-             $definedversion->defined_act_en = 1;
-          if($deffield == 'defined_act_ru')
-            $definedversion->defined_act_ru = 1;
-        if($deffield == 'defined_unact_en')
-            $definedversion->defined_unact_en = 1;
-        if($deffield == 'defined_unact_ru')
-            $definedversion->defined_unact_ru = 1;
-            $definedversion->save();
+   
+       //=========== Праверка на уникальность по uuid
+
+       if(isset($request->installid) && strlen($request->installid) == 32) {
+
+            $application = Application::where('uuid', $request->installid)->first();
+            if(!$application){
+
+                $application = new Application();
+                $application->uuid =  $request->installid;
+                $application->version =  $request->ver;
+                if(isset($request->lang)){
+                    if($request->lang == 'en' || $request->lang == 'ru') {
+                        $application->lang = $request->lang;
+                    }
+                }
+                $application->save();
+            }
+             $hit = Hit::where('application_id', $application->id)
+             ->whereDate('created_at', Carbon::today())
+             ->first();
+
+             if(!$hit){
+
+               if (!$definedversion) {
+                 $definedversion = new DefinedVersion();
+                 $definedversion->created_at = Carbon::today();
+                 $definedversion->defined_act_ru = 0;
+                 if($request->ver == 880){
+                       $definedversion->defined_unact_ru = 0;
+                    } 
+              } 
+                 $definedversion->defined_act_ru += 1;
+                 $definedversion->save();
+                 if($request->ver == 880){
+                       $definedversion->defined_unact_ru += 1;
+                       $definedversion->save();
+                    }
+             }
         }
+
+      //===========
 
         $hit = new Hit();
         $hit->log = json_encode($request->all(), true);
@@ -104,7 +125,6 @@ class StatController extends Controller
                 $hit->lang = $request->lang;
             }
         }
-
 
         if(isset($request->installid)) {
             $application = Application::where('uuid', $request->installid)->first();
@@ -123,10 +143,8 @@ class StatController extends Controller
         }
         $hit->save();
 
-
         $log = new Logger();
         $log->text = $ip . ' : ' . json_encode($request->all(), true) ;
         $log->save();
-//        dd($request->all(), $ip);
     }
 }
